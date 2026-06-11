@@ -1,1 +1,4 @@
-envs/prod/.terraform
+.terraform/
+envs/prod/backend.hcl
+*.tfstate
+*.tfstate.backup
