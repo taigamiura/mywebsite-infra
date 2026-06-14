@@ -3,7 +3,7 @@ output "name_servers" {
   value       = aws_route53_zone.main.name_servers
 }
 
-output "s3_bucket_name" {
-  description = "HTML等をアップロードするS3バケット名"
-  value       = aws_s3_bucket.web_bucket.id
-}
+# output "s3_bucket_name" {
+#   description = "HTML等をアップロードするS3バケット名"
+#   value       = aws_s3_bucket.web_bucket.id
+# }

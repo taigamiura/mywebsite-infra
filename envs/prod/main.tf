@@ -79,112 +79,122 @@ resource "aws_route53_record" "cert_validation" {
 
 # 証明書検証の完了を待機するリソース
 resource "aws_acm_certificate_validation" "cert" {
+  count = var.dns_delegation_completed ? 1 : 0
+
   provider                = aws.us_east_1 # バージニア指定
   certificate_arn         = aws_acm_certificate.cert.arn
   validation_record_fqdns = [for record in aws_route53_record.cert_validation : record.fqdn]
 }
 
-# ==========================================
-# 4. S3 Bucket (静的ファイル配信用)
-# ==========================================
-resource "aws_s3_bucket" "web_bucket" {
-  bucket        = "web-${var.domain_name}-${data.aws_caller_identity.current.account_id}"
-  force_destroy = true # 削除時にバケット内を空にする設定
-}
+# # ==========================================
+# # 4. S3 Bucket (静的ファイル配信用)
+# # ==========================================
+# resource "aws_s3_bucket" "web_bucket" {
+#   bucket        = "web-${var.domain_name}-${data.aws_caller_identity.current.account_id}"
+#   force_destroy = true # 削除時にバケット内を空にする設定
+# }
 
-data "aws_caller_identity" "current" {}
+# data "aws_caller_identity" "current" {}
 
-# S3バケットポリシー（CloudFront OACからのアクセスのみ許可）
-resource "aws_s3_bucket_policy" "web_bucket_policy" {
-  bucket = aws_s3_bucket.web_bucket.id
-  policy = data.aws_iam_policy_document.s3_policy.json
-}
+# # S3バケットポリシー（CloudFront OACからのアクセスのみ許可）
+# resource "aws_s3_bucket_policy" "web_bucket_policy" {
+#   count  = var.dns_delegation_completed ? 1 : 0
+#   bucket = aws_s3_bucket.web_bucket.id
+#   policy = data.aws_iam_policy_document.s3_policy[0].json
+# }
 
-data "aws_iam_policy_document" "s3_policy" {
-  statement {
-    actions   = ["s3:GetObject"]
-    resources = ["${aws_s3_bucket.web_bucket.arn}/*"]
+# data "aws_iam_policy_document" "s3_policy" {
+#   count = var.dns_delegation_completed ? 1 : 0
 
-    principals {
-      type        = "Service"
-      identifiers = ["cloudfront.amazonaws.com"]
-    }
+#   statement {
+#     actions   = ["s3:GetObject"]
+#     resources = ["${aws_s3_bucket.web_bucket.arn}/*"]
 
-    condition {
-      test     = "StringEquals"
-      variable = "AWS:SourceArn"
-      values   = [aws_cloudfront_distribution.s3_distribution.arn]
-    }
-  }
-}
+#     principals {
+#       type        = "Service"
+#       identifiers = ["cloudfront.amazonaws.com"]
+#     }
 
-# ==========================================
-# 5. CloudFront
-# ==========================================
-# Origin Access Control (OAC) の作成
-resource "aws_cloudfront_origin_access_control" "oac" {
-  name                              = "s3-oac-${var.domain_name}"
-  origin_access_control_origin_type = "s3"
-  signing_behavior                  = "always"
-  signing_protocol                  = "sigv4"
-}
+#     condition {
+#       test     = "StringEquals"
+#       variable = "AWS:SourceArn"
+#       values   = [aws_cloudfront_distribution.s3_distribution[0].arn]
+#     }
+#   }
+# }
 
-# ディストリビューション
-resource "aws_cloudfront_distribution" "s3_distribution" {
-  origin {
-    domain_name              = aws_s3_bucket.web_bucket.bucket_regional_domain_name
-    origin_access_control_id = aws_cloudfront_origin_access_control.oac.id
-    origin_id                = "S3-${aws_s3_bucket.web_bucket.id}"
-  }
+# # ==========================================
+# # 5. CloudFront
+# # ==========================================
+# # Origin Access Control (OAC) の作成
+# resource "aws_cloudfront_origin_access_control" "oac" {
+#   count = var.dns_delegation_completed ? 1 : 0
 
-  enabled             = true
-  is_ipv6_enabled     = true
-  default_root_object = "index.html"
+#   name                              = "s3-oac-${var.domain_name}"
+#   origin_access_control_origin_type = "s3"
+#   signing_behavior                  = "always"
+#   signing_protocol                  = "sigv4"
+# }
 
-  aliases = [var.domain_name]
+# # ディストリビューション
+# resource "aws_cloudfront_distribution" "s3_distribution" {
+#   count = var.dns_delegation_completed ? 1 : 0
 
-  default_cache_behavior {
-    allowed_methods  = ["GET", "HEAD"]
-    cached_methods   = ["GET", "HEAD"]
-    target_origin_id = "S3-${aws_s3_bucket.web_bucket.id}"
+#   origin {
+#     domain_name              = aws_s3_bucket.web_bucket.bucket_regional_domain_name
+#     origin_access_control_id = aws_cloudfront_origin_access_control.oac[0].id
+#     origin_id                = "S3-${aws_s3_bucket.web_bucket.id}"
+#   }
 
-    forwarded_values {
-      query_string = false
-      cookies {
-        forward = "none"
-      }
-    }
+#   enabled             = true
+#   is_ipv6_enabled     = true
+#   default_root_object = "index.html"
 
-    viewer_protocol_policy = "redirect-to-https" # HTTPをHTTPSへリダイレクト
-    min_ttl                = 0
-    default_ttl            = 3600
-    max_ttl                = 86400
-  }
+#   aliases = [var.domain_name]
 
-  restrictions {
-    geo_restriction {
-      restriction_type = "none"
-    }
-  }
+#   default_cache_behavior {
+#     allowed_methods  = ["GET", "HEAD"]
+#     cached_methods   = ["GET", "HEAD"]
+#     target_origin_id = "S3-${aws_s3_bucket.web_bucket.id}"
 
-  viewer_certificate {
-    acm_certificate_arn      = aws_acm_certificate_validation.cert.certificate_arn
-    ssl_support_method       = "sni-only"
-    minimum_protocol_version = "TLSv1.2_2021"
-  }
-}
+#     forwarded_values {
+#       query_string = false
+#       cookies {
+#         forward = "none"
+#       }
+#     }
 
-# ==========================================
-# 6. Route 53 (CloudFrontへのエイリアスレコード)
-# ==========================================
-resource "aws_route53_record" "www" {
-  zone_id = aws_route53_zone.main.zone_id
-  name    = var.domain_name
-  type    = "A"
+#     viewer_protocol_policy = "redirect-to-https" # HTTPをHTTPSへリダイレクト
+#     min_ttl                = 0
+#     default_ttl            = 3600
+#     max_ttl                = 86400
+#   }
 
-  alias {
-    name                   = aws_cloudfront_distribution.s3_distribution.domain_name
-    zone_id                = aws_cloudfront_distribution.s3_distribution.hosted_zone_id
-    evaluate_target_health = false
-  }
-}
+#   restrictions {
+#     geo_restriction {
+#       restriction_type = "none"
+#     }
+#   }
+
+#   viewer_certificate {
+#     acm_certificate_arn      = aws_acm_certificate_validation.cert[0].certificate_arn
+#     ssl_support_method       = "sni-only"
+#     minimum_protocol_version = "TLSv1.2_2021"
+#   }
+# }
+
+# # ==========================================
+# # 6. Route 53 (CloudFrontへのエイリアスレコード)
+# # ==========================================
+# resource "aws_route53_record" "www" {
+#   count   = var.dns_delegation_completed ? 1 : 0
+#   zone_id = aws_route53_zone.main.zone_id
+#   name    = var.domain_name
+#   type    = "A"
+
+#   alias {
+#     name                   = aws_cloudfront_distribution.s3_distribution[0].domain_name
+#     zone_id                = aws_cloudfront_distribution.s3_distribution[0].hosted_zone_id
+#     evaluate_target_health = false
+#   }
+# }

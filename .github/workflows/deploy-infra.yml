@@ -17,6 +17,8 @@ concurrency:
 jobs:
   terraform:
     runs-on: ubuntu-latest
+    env:
+      TF_VAR_dns_delegation_completed: ${{ vars['DNS_DELEGATION_COMPLETED'] || 'false' }}
     defaults:
       run:
         working-directory: envs/prod
@@ -58,3 +60,7 @@ jobs:
       - name: Terraform Apply
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: terraform apply -input=false -auto-approve tfplan
+
+      - name: Terraform Output For Initial Setup
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && env.TF_VAR_dns_delegation_completed != 'true'
+        run: terraform output
